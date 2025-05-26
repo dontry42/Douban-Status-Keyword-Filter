@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Douban Status Keyword Filter
 // @namespace    http://tampermonkey.net/
-// @version      1.5
-// @description  Hides Douban status posts containing specified keywords, hides duplicate reposts based on data-aid, adds a context menu to add keywords, and provides a UI to manage keywords
+// @version      1.10
+// @description  Hides Douban status posts containing specified keywords, hides duplicate reposts based on nested status-real-wrapper data-sid (replacing content with '<original username>说：略' for reposts with new content, removing whitespace), hides reposts without new content based on data-aid, preserves reposter's input, adds a context menu to add keywords, and provides a UI to manage keywords
 // @author       Grok
 // @match        https://www.douban.com/*
 // @grant        GM_setValue
@@ -16,7 +16,8 @@
     let keywordString = GM_getValue('keywordString', "");
     let keywords = keywordString.replace(/'/g, '').split(',').filter(k => k.trim());
 
-    // Set to track seen activity IDs (data-aid)
+    // Sets to track seen status IDs and activity IDs
+    const seenStatusIds = new Set();
     const seenActivityIds = new Set();
 
     // Function to save keywords to persistent storage
@@ -31,20 +32,60 @@
         return keywords.some(keyword => text.toLowerCase().includes(keyword.toLowerCase()));
     }
 
-    // Function to hide status elements with keywords or duplicate activity IDs
+    // Function to hide status elements with keywords or duplicate IDs
     function hideStatusElements() {
         const statuses = document.querySelectorAll('div.new-status.status-wrapper:not([data-checked])');
         statuses.forEach(status => {
             status.setAttribute('data-checked', 'true');
+            const isRepost = status.classList.contains('status-reshared-wrapper');
+            let statusId;
             const activityId = status.getAttribute('data-aid');
+
+            // Get statusId for reposts from nested status-real-wrapper
+            if (isRepost) {
+                const realStatus = status.querySelector('div.status-real-wrapper');
+                statusId = realStatus ? realStatus.getAttribute('data-sid') : null;
+            } else {
+                statusId = status.getAttribute('data-sid');
+            }
+
+            // Collect text for keyword filtering
             const textElements = status.querySelectorAll('span.reshared_by, div.text, div.content p, div.content a, blockquote p, blockquote a');
             const allText = Array.from(textElements).map(el => el.textContent).join(' ');
 
-            // Hide if contains keyword or is a duplicate activity ID
-            if (containsKeyword(allText) || (activityId && seenActivityIds.has(activityId))) {
-                status.style.display = 'none'; // Hide status, next status moves up
-            } else if (activityId) {
-                seenActivityIds.add(activityId); // Track new activity ID
+            // Hide if contains a keyword
+            if (containsKeyword(allText)) {
+                status.style.display = 'none';
+                return;
+            }
+
+            // Check for duplicates via data-aid (for posts without new content)
+            if (activityId && seenActivityIds.has(activityId)) {
+                status.style.display = 'none';
+                return;
+            }
+
+            // Check for duplicates via data-sid (for reposts with new content)
+            if (statusId && seenStatusIds.has(statusId)) {
+                if (isRepost) {
+                    // Preserve reposter's input, replace nested status-real-wrapper with '<original username>说：略'
+                    const realStatus = status.querySelector('div.status-real-wrapper');
+                    if (realStatus) {
+                        const originalUserLink = realStatus.querySelector('div.text a.lnk-people');
+                        const username = originalUserLink ? originalUserLink.textContent : 'Unknown';
+                        realStatus.innerHTML = `<p>${username}说：略</p>`;
+                        realStatus.style.margin = '0'; // Remove any margins causing whitespace
+                        realStatus.style.padding = '0'; // Remove padding
+                        status.style.height = 'auto'; // Remove inline height to collapse whitespace
+                    }
+                } else {
+                    // Hide non-repost duplicates
+                    status.style.display = 'none';
+                }
+            } else {
+                // Track new IDs
+                if (statusId) seenStatusIds.add(statusId);
+                if (activityId) seenActivityIds.add(activityId);
             }
         });
     }
