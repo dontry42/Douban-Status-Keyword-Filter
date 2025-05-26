@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Douban Status Keyword Filter
 // @namespace    http://tampermonkey.net/
-// @version      1.3
-// @description  Hides Douban status posts containing specified keywords, adds a context menu to add keywords, and provides a UI to manage keywords
+// @version      1.5
+// @description  Hides Douban status posts containing specified keywords, hides duplicate reposts based on data-aid, adds a context menu to add keywords, and provides a UI to manage keywords
 // @author       Grok
 // @match        https://www.douban.com/*
 // @grant        GM_setValue
@@ -16,6 +16,9 @@
     let keywordString = GM_getValue('keywordString', "");
     let keywords = keywordString.replace(/'/g, '').split(',').filter(k => k.trim());
 
+    // Set to track seen activity IDs (data-aid)
+    const seenActivityIds = new Set();
+
     // Function to save keywords to persistent storage
     function saveKeywords() {
         keywordString = `'${keywords.join("','")}'`;
@@ -28,15 +31,20 @@
         return keywords.some(keyword => text.toLowerCase().includes(keyword.toLowerCase()));
     }
 
-    // Function to hide status elements with keywords
+    // Function to hide status elements with keywords or duplicate activity IDs
     function hideStatusElements() {
         const statuses = document.querySelectorAll('div.new-status.status-wrapper:not([data-checked])');
         statuses.forEach(status => {
             status.setAttribute('data-checked', 'true');
+            const activityId = status.getAttribute('data-aid');
             const textElements = status.querySelectorAll('span.reshared_by, div.text, div.content p, div.content a, blockquote p, blockquote a');
             const allText = Array.from(textElements).map(el => el.textContent).join(' ');
-            if (containsKeyword(allText)) {
+
+            // Hide if contains keyword or is a duplicate activity ID
+            if (containsKeyword(allText) || (activityId && seenActivityIds.has(activityId))) {
                 status.style.display = 'none'; // Hide status, next status moves up
+            } else if (activityId) {
+                seenActivityIds.add(activityId); // Track new activity ID
             }
         });
     }
@@ -182,8 +190,8 @@
                 const menu = document.createElement('div');
                 menu.id = 'custom-context-menu';
                 menu.style.position = 'absolute';
-                menu.style.left = `${event.pageX + 50}px`; // Increased offset to 20px
-                menu.style.top = `${event.pageY + 50}px`; // Increased offset to 20px
+                menu.style.left = `${event.pageX + 50}px`;
+                menu.style.top = `${event.pageY + 50}px`;
                 menu.style.backgroundColor = '#fff';
                 menu.style.border = '1px solid #ccc';
                 menu.style.padding = '5px';
